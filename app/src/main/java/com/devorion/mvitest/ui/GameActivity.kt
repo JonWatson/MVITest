@@ -6,22 +6,28 @@ import androidx.appcompat.app.AppCompatActivity
 import com.badoo.mvicore.android.lifecycle.CreateDestroyBinderLifecycle
 import com.badoo.mvicore.binder.Binder
 import com.devorion.mvitest.R
+import com.devorion.mvitest.storage.GameStorage
 import com.jakewharton.rxbinding2.view.touches
 import io.reactivex.functions.Consumer
 import kotlinx.android.synthetic.main.activity_main.*
+import org.koin.android.ext.android.inject
 
 class GameActivity : AppCompatActivity() {
+
+    private val gameStorage: GameStorage by inject()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
         val binder = Binder(CreateDestroyBinderLifecycle(lifecycle))
-
-        val feature = GameFeature(resources.displayMetrics.widthPixels, 3)
-
+        val feature = GameFeature(
+            gameStorage,
+            resources.displayMetrics.widthPixels,
+            3
+        )
         binder.bind(feature to Consumer {
-            Log.d("Test", it.toString())
+            Log.d("State", it.toString())
             when (it.gameState) {
                 GameState.ReadyToStart -> showReadyToStart(it)
                 GameState.CountingDown -> updateCountdown(it)
@@ -31,33 +37,36 @@ class GameActivity : AppCompatActivity() {
             }
         })
 
-        gameBoard.touches().map { Wish.BoardClick(it.x, it.y) }.subscribe(feature)
+        gameBoard.touches().map { Wish.BoardPress(it.x, it.y) }.subscribe(feature)
     }
 
     private fun showReadyToStart(state: State) {
-        countdown.text = ""
-        streak.text = ""
-        status.text = "Touch to start\nHighest Streak = ${state.highestStreak}"
+        countdown.text = "Press To Start"
+        status.text = "Touch Squares to Increase Streak\nHighest Streak = ${state.highestStreak}"
         gameBoard.clearSquare()
     }
 
     private fun updateCountdown(state: State) {
         countdown.text = state.countdownValue.toString()
-        streak.text = ""
         status.text = ""
     }
 
     private fun clearAndShowStreak(state: State) {
         gameBoard.clearSquare()
         countdown.text = ""
-        streak.text = getStreakString(state.streak)
-        status.text = ""
+        status.text = "Streak: ${state.streak}"
     }
 
     private fun showGameOver(it: State) {
-        streak.text = ""
-        status.text = "Game Over"
+        val sb = StringBuilder("Game Over\n").apply {
+            if (it.streak == it.highestStreak) {
+                append("New High Streak: ${it.streak}!")
+            } else {
+                append("Last Streak: ${it.streak}")
+            }
+        }
+        countdown.text = "Press To Try Again"
+        status.text = sb.toString()
+        gameBoard.clearSquare()
     }
-
-    private fun getStreakString(streak: Int): String = "Streak: $streak"
 }

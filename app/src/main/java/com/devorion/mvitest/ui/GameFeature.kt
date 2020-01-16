@@ -5,6 +5,7 @@ import com.badoo.mvicore.element.Actor
 import com.badoo.mvicore.element.PostProcessor
 import com.badoo.mvicore.element.Reducer
 import com.badoo.mvicore.feature.BaseFeature
+import com.devorion.mvitest.storage.GameStorage
 import io.reactivex.Observable
 import io.reactivex.android.schedulers.AndroidSchedulers
 import io.reactivex.disposables.Disposable
@@ -15,25 +16,27 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.max
 
 class GameFeature(
+    gameStorage: GameStorage,
     boardSize: Int,
     countdownLength: Int
 ) : BaseFeature<Wish, Action, Effect, State, Nothing>(
     initialState = State(
         GameState.ReadyToStart,
         0,
-        0,  // TODO persistence
+        gameStorage.highestStreak,  // TODO persistence
         null,
         null
     ),
     wishToAction = { wish ->
         when (wish) {
-            is Wish.BoardClick -> Action.BoardClick(
+            is Wish.BoardPress -> Action.BoardPress(
                 wish.x.toInt(),
                 wish.y.toInt()
             )
         }
     },
     actor = GameActor(
+        gameStorage,
         boardSize,
         countdownLength
     ),
@@ -43,6 +46,7 @@ class GameFeature(
 
     // Actor
     class GameActor(
+        private val gameStorage: GameStorage,
         private val boardSize: Int,
         private val countdownLength: Int
     ) : Actor<State, Action, Effect> {
@@ -50,13 +54,12 @@ class GameFeature(
 
         override fun invoke(state: State, action: Action): Observable<out Effect> {
             return when (action) {
-                is Action.BoardClick -> {
+                is Action.BoardPress -> {
                     when (state.gameState) {
-                        GameState.ReadyToStart -> startCountdown()
+                        GameState.ReadyToStart, GameState.GameOver -> startCountdown()
                         GameState.CountingDown -> Observable.empty()
                         GameState.WaitingToShowSquare -> Observable.empty()
-                        GameState.ShowingSquare -> checkBoardClick(state, action)
-                        GameState.GameOver -> Observable.just(Effect.RestartGame)
+                        GameState.ShowingSquare -> checkBoardPress(state, action)
                     }
                 }
                 Action.StartSquareDelay ->
@@ -75,6 +78,7 @@ class GameFeature(
                         getSquareShowDuration(state),
                         TimeUnit.MILLISECONDS
                     ).map {
+                        gameStorage.highestStreak = max(gameStorage.highestStreak, state.streak)
                         Effect.Fail
                     }.subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
                         .doOnSubscribe {
@@ -83,6 +87,7 @@ class GameFeature(
             }
         }
 
+        // When starting a new game, a countdown is displayed before the first square is shown
         private fun startCountdown(): Observable<out Effect> {
             return Observable.zip(Observable.range(0, countdownLength + 1),
                 Observable.interval(0, 1000, TimeUnit.MILLISECONDS),
@@ -90,18 +95,23 @@ class GameFeature(
                     countdownLength - countdownVal
                 })
                 .map {
-                    Effect.UpdateStartCountdownValue(it)
+                    if (it == 0) {
+                        Effect.GameStarted
+                    } else {
+                        Effect.UpdateStartCountdownValue(it)
+                    }
                 }
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
         }
 
-        private fun checkBoardClick(
+        // Check if the users press falls within the bounds of the shown square
+        private fun checkBoardPress(
             state: State,
-            boardClickAction: Action.BoardClick
+            boardPressAction: Action.BoardPress
         ): Observable<out Effect> {
             return if (state.squareRect != null &&
-                state.squareRect.contains(boardClickAction.x, boardClickAction.y)
+                state.squareRect.contains(boardPressAction.x, boardPressAction.y)
             ) {
                 squareShowDisposable?.dispose()
                 Observable.just(Effect.Success)
@@ -110,10 +120,13 @@ class GameFeature(
             }
         }
 
+        // Determine size of the next square.
+        // This can be used to manage game difficulty as a streak grows
         private fun getNewSquareSize(state: State): Int {
-            return max(((boardSize / 10) - state.streak), boardSize / 20)
+            return max(((boardSize / 8) - state.streak), boardSize / 18)
         }
 
+        // Pick a random point on the board to show the next square
         private fun getRandomSquareRect(
             squareSize: Int
         ): Rect {
@@ -123,10 +136,14 @@ class GameFeature(
             return Rect(x, y, x + squareSize, y + squareSize)
         }
 
+        // Determine the delay between a successful hit and the next square being shown.
+        // This can be used to manage game difficulty as a streak grows
         private fun getSquareShowDelay(state: State): Long {
             return max(1250 - state.streak * 10, 500).toLong()
         }
 
+        // Determine the time the player has to press the square being shown.
+        // This can be used to manage game difficulty as a streak grows
         private fun getSquareShowDuration(state: State): Long {
             return max(1250 - state.streak * 10, 500).toLong()
         }
@@ -139,11 +156,10 @@ class GameFeature(
             effect: Effect
         ): State {
             return when (effect) {
-                Effect.RestartGame ->
+                Effect.GameStarted ->
                     state.copy(
-                        gameState = GameState.ReadyToStart,
-                        streak = 0,
-                        squareRect = null
+                        gameState = GameState.WaitingToShowSquare,
+                        streak = 0
                     )
                 is Effect.UpdateStartCountdownValue ->
                     state.copy(
@@ -161,7 +177,12 @@ class GameFeature(
                         streak = state.streak + 1,
                         squareRect = null
                     )
-                Effect.Fail -> state.copy(gameState = GameState.GameOver)
+                Effect.Fail ->
+                    state.copy(
+                        gameState = GameState.GameOver,
+                        squareRect = null,
+                        highestStreak = max(state.streak, state.highestStreak)
+                    )
 
             }
         }
@@ -171,8 +192,7 @@ class GameFeature(
     class GamePostProcessor : PostProcessor<Action, Effect, State> {
         override fun invoke(action: Action, effect: Effect, state: State): Action? {
             return when {
-                effect is Effect.UpdateStartCountdownValue && state.countdownValue == 0 ||
-                        effect is Effect.Success -> Action.StartSquareDelay
+                effect is Effect.GameStarted || effect is Effect.Success -> Action.StartSquareDelay
                 effect is Effect.DrawSquare && state.gameState == GameState.ShowingSquare -> Action.StartSquareDuration
                 else -> null
             }
@@ -197,19 +217,19 @@ sealed class GameState {
 }
 
 sealed class Wish {
-    data class BoardClick(val x: Float, val y: Float) : Wish()
+    data class BoardPress(val x: Float, val y: Float) : Wish()
 }
 
 sealed class Action {
-    data class BoardClick(val x: Int, val y: Int) : Action()
+    data class BoardPress(val x: Int, val y: Int) : Action()
     object StartSquareDelay : Action()
     object StartSquareDuration : Action()
 }
 
 sealed class Effect {
-    object RestartGame : Effect()
     data class UpdateStartCountdownValue(val countdownValue: Int) : Effect()
     data class DrawSquare(val squareRect: Rect) : Effect()
+    object GameStarted : Effect()
     object Success : Effect()
     object Fail : Effect()
 }
