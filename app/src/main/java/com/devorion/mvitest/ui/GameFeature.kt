@@ -63,6 +63,7 @@ class GameFeature(
                     }
                 }
                 Action.StartSquareDelay ->
+                    // After a short time, display the square(gives the user a break between squares)
                     Observable.timer(
                         getSquareShowDelay(state),
                         TimeUnit.MILLISECONDS
@@ -74,6 +75,7 @@ class GameFeature(
                         )
                     }.subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
                 Action.StartSquareDuration ->
+                    // Start a timer for how long the user has to click the square.  Game Over if Fail Effect triggers
                     Observable.timer(
                         getSquareShowDuration(state),
                         TimeUnit.MILLISECONDS
@@ -82,6 +84,7 @@ class GameFeature(
                         Effect.Fail
                     }.subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
                         .doOnSubscribe {
+                            // Store the disposable so we can cancel it if the user presses the square in time
                             squareShowDisposable = it
                         }
             }
@@ -192,7 +195,9 @@ class GameFeature(
     class GamePostProcessor : PostProcessor<Action, Effect, State> {
         override fun invoke(action: Action, effect: Effect, state: State): Action? {
             return when {
+                // These effects need to trigger an action that starts the delay between square draws
                 effect is Effect.GameStarted || effect is Effect.Success -> Action.StartSquareDelay
+                // If we drew the square, need to trigger an action that starts the timer for how long the user has to press the square
                 effect is Effect.DrawSquare && state.gameState == GameState.ShowingSquare -> Action.StartSquareDuration
                 else -> null
             }
