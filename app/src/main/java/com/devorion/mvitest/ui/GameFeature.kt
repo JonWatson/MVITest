@@ -23,7 +23,7 @@ class GameFeature(
     initialState = State(
         GameState.ReadyToStart,
         0,
-        gameStorage.highestStreak,  // TODO persistence
+        gameStorage.highestStreak,
         null,
         null
     ),
