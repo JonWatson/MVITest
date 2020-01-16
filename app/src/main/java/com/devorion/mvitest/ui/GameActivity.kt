@@ -62,7 +62,7 @@ class GameActivity : AppCompatActivity() {
             if (it.streak == it.highestStreak) {
                 append("New High Streak: ${it.streak}!")
             } else {
-                append("Last Streak: ${it.streak}")
+                append("Highest Streak: ${it.highestStreak}")
             }
         }
         countdown.text = "Press To Try Again"
