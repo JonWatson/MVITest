@@ -8,12 +8,13 @@ import com.badoo.mvicore.binder.Binder
 import com.devorion.mvitest.R
 import com.devorion.mvitest.storage.GameStorage
 import com.jakewharton.rxbinding2.view.touches
+import io.reactivex.ObservableSource
+import io.reactivex.Observer
 import io.reactivex.functions.Consumer
 import kotlinx.android.synthetic.main.activity_main.*
 import org.koin.android.ext.android.inject
 
-class GameActivity : AppCompatActivity() {
-
+class GameActivity : AppCompatActivity(), ObservableSource<Wish> {
     private val gameStorage: GameStorage by inject()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,7 +38,11 @@ class GameActivity : AppCompatActivity() {
             }
         })
 
-        gameBoard.touches().map { Wish.BoardPress(it.x, it.y) }.subscribe(feature)
+        binder.bind(this to feature)
+    }
+
+    override fun subscribe(observer: Observer<in Wish>) {
+        gameBoard.touches().map { Wish.BoardPress(it.x, it.y) }.subscribe(observer)
     }
 
     private fun showReadyToStart(state: State) {

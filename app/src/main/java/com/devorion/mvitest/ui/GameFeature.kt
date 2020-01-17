@@ -9,7 +9,7 @@ import com.devorion.mvitest.storage.GameStorage
 import io.reactivex.Observable
 import io.reactivex.android.schedulers.AndroidSchedulers
 import io.reactivex.disposables.Disposable
-import io.reactivex.functions.BiFunction
+import io.reactivex.rxkotlin.Observables
 import io.reactivex.schedulers.Schedulers
 import java.util.*
 import java.util.concurrent.TimeUnit
@@ -92,20 +92,18 @@ class GameFeature(
 
         // When starting a new game, a countdown is displayed before the first square is shown
         private fun startCountdown(): Observable<out Effect> {
-            return Observable.zip(Observable.range(0, countdownLength + 1),
-                Observable.interval(0, 1000, TimeUnit.MILLISECONDS),
-                BiFunction<Int, Long, Int> { countdownVal, _ ->
-                    countdownLength - countdownVal
-                })
-                .map {
-                    if (it == 0) {
-                        Effect.GameStarted
-                    } else {
-                        Effect.UpdateStartCountdownValue(it)
-                    }
+            return Observables.zip(
+                Observable.range(0, countdownLength + 1),
+                Observable.interval(0, 1000, TimeUnit.MILLISECONDS)
+            ) { countdownVal: Int, _ ->
+                countdownLength - countdownVal
+            }.map {
+                if (it == 0) {
+                    Effect.GameStarted
+                } else {
+                    Effect.UpdateStartCountdownValue(it)
                 }
-                .subscribeOn(Schedulers.io())
-                .observeOn(AndroidSchedulers.mainThread())
+            }.subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
         }
 
         // Check if the users press falls within the bounds of the shown square
