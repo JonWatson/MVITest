@@ -25,7 +25,8 @@ class GameFeature(
         0,
         gameStorage.highestStreak,
         null,
-        null
+        countdownLength,
+        countdownLength
     ),
     wishToAction = { wish ->
         when (wish) {
@@ -33,12 +34,13 @@ class GameFeature(
                 wish.x.toInt(),
                 wish.y.toInt()
             )
+            Wish.Resume -> Action.Resume
+            Wish.Pause -> Action.Pause
         }
     },
     actor = GameActor(
         gameStorage,
-        boardSize,
-        countdownLength
+        boardSize
     ),
     reducer = GameReducer(),
     postProcessor = GamePostProcessor()
@@ -47,56 +49,57 @@ class GameFeature(
     // Actor
     class GameActor(
         private val gameStorage: GameStorage,
-        private val boardSize: Int,
-        private val countdownLength: Int
+        private val boardSize: Int
     ) : Actor<State, Action, Effect> {
-        var squareShowDisposable: Disposable? = null
+        var showSquareDisposable: Disposable? = null
+        var delaySquareDisposable: Disposable? = null
+        var countdownDisposable: Disposable? = null
 
         override fun invoke(state: State, action: Action): Observable<out Effect> {
             return when (action) {
                 is Action.BoardPress -> {
                     when (state.gameState) {
-                        GameState.ReadyToStart, GameState.GameOver -> startCountdown()
+                        GameState.ReadyToStart, GameState.GameOver -> {
+                            Observable.just(Effect.StartCountdown)
+                        }
                         GameState.CountingDown -> Observable.empty()
                         GameState.WaitingToShowSquare -> Observable.empty()
                         GameState.ShowingSquare -> checkBoardPress(state, action)
                     }
                 }
-                Action.StartSquareDelay ->
-                    // After a short time, display the square(gives the user a break between squares)
-                    Observable.timer(
-                        getSquareShowDelay(state),
-                        TimeUnit.MILLISECONDS
-                    ).map {
-                        Effect.DrawSquare(
-                            getRandomSquareRect(
-                                getNewSquareSize(state)
-                            )
-                        )
-                    }.subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
-                Action.StartSquareDuration ->
-                    // Start a timer for how long the user has to click the square.  Game Over if Fail Effect triggers
-                    Observable.timer(
-                        getSquareShowDuration(state),
-                        TimeUnit.MILLISECONDS
-                    ).map {
-                        gameStorage.highestStreak = max(gameStorage.highestStreak, state.streak)
-                        Effect.Fail
-                    }.subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
-                        .doOnSubscribe {
-                            // Store the disposable so we can cancel it if the user presses the square in time
-                            squareShowDisposable = it
-                        }
+                Action.DoCountdown -> {
+                    startCountdown(state)
+                }
+                Action.StartSquareDelay -> {
+                    startSquareDelay(state)
+                }
+                Action.StartSquareDuration -> {
+                    startSquareShowDuration(state)
+                }
+                Action.Resume -> {
+                    when (state.gameState) {
+                        GameState.CountingDown -> startCountdown(state)
+                        GameState.WaitingToShowSquare -> startSquareDelay(state)
+                        GameState.ShowingSquare -> startSquareShowDuration(state)
+                        else -> Observable.empty()
+                    }
+                }
+                Action.Pause -> {
+                    delaySquareDisposable?.dispose()
+                    showSquareDisposable?.dispose()
+                    countdownDisposable?.dispose()
+                    Observable.empty()
+                }
             }
         }
 
         // When starting a new game, a countdown is displayed before the first square is shown
-        private fun startCountdown(): Observable<out Effect> {
+        private fun startCountdown(state: State): Observable<out Effect> {
             return Observables.zip(
-                Observable.range(0, countdownLength + 1),
+                Observable.range(0, state.countdownValue + 1),
                 Observable.interval(0, 1000, TimeUnit.MILLISECONDS)
             ) { countdownVal: Int, _ ->
-                countdownLength - countdownVal
+                state.countdownValue - countdownVal
             }.map {
                 if (it == 0) {
                     Effect.GameStarted
@@ -104,6 +107,42 @@ class GameFeature(
                     Effect.UpdateStartCountdownValue(it)
                 }
             }.subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
+                .doOnSubscribe {
+                    // Store the disposable so we can cancel it if the user presses the square in time
+                    countdownDisposable = it
+                }
+        }
+
+        // After a short time, display the square(gives the user a break between squares)
+        private fun startSquareDelay(state: State): Observable<out Effect> {
+            return Observable.timer(
+                getShowSquareDelay(state),
+                TimeUnit.MILLISECONDS
+            ).map {
+                Effect.DrawSquare(
+                    getRandomSquareRect(
+                        getNewSquareSize(state)
+                    )
+                )
+            }.subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
+                .doOnSubscribe {
+                    delaySquareDisposable = it
+                }
+        }
+
+        // Start a timer for how long the user has to click the square.  Game Over if Fail Effect triggers
+        private fun startSquareShowDuration(state: State): Observable<out Effect> {
+            return Observable.timer(
+                getSquareShowDuration(state),
+                TimeUnit.MILLISECONDS
+            ).map {
+                gameStorage.highestStreak = max(gameStorage.highestStreak, state.streak)
+                Effect.Fail
+            }.subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
+                .doOnSubscribe {
+                    // Store the disposable so we can cancel it if the user presses the square in time
+                    showSquareDisposable = it
+                }
         }
 
         // Check if the users press falls within the bounds of the shown square
@@ -114,7 +153,7 @@ class GameFeature(
             return if (state.squareRect != null &&
                 state.squareRect.contains(boardPressAction.x, boardPressAction.y)
             ) {
-                squareShowDisposable?.dispose()
+                showSquareDisposable?.dispose()
                 Observable.just(Effect.Success)
             } else {
                 Observable.empty()
@@ -139,7 +178,7 @@ class GameFeature(
 
         // Determine the delay between a successful hit and the next square being shown.
         // This can be used to manage game difficulty as a streak grows
-        private fun getSquareShowDelay(state: State): Long {
+        private fun getShowSquareDelay(state: State): Long {
             return max(1250 - state.streak * 10, 500).toLong()
         }
 
@@ -184,7 +223,11 @@ class GameFeature(
                         squareRect = null,
                         highestStreak = max(state.streak, state.highestStreak)
                     )
-
+                Effect.StartCountdown -> {
+                    state.copy(
+                        countdownValue = state.countdownStartValue
+                    )
+                }
             }
         }
     }
@@ -197,6 +240,7 @@ class GameFeature(
                 effect is Effect.GameStarted || effect is Effect.Success -> Action.StartSquareDelay
                 // If we drew the square, need to trigger an action that starts the timer for how long the user has to press the square
                 effect is Effect.DrawSquare && state.gameState == GameState.ShowingSquare -> Action.StartSquareDuration
+                effect is Effect.StartCountdown -> Action.DoCountdown
                 else -> null
             }
         }
@@ -208,7 +252,8 @@ data class State(
     val streak: Int,
     val highestStreak: Int,
     val squareRect: Rect?,
-    val countdownValue: Int?
+    val countdownValue: Int,
+    val countdownStartValue: Int
 )
 
 sealed class GameState {
@@ -221,15 +266,21 @@ sealed class GameState {
 
 sealed class Wish {
     data class BoardPress(val x: Float, val y: Float) : Wish()
+    object Resume : Wish()
+    object Pause : Wish()
 }
 
 sealed class Action {
     data class BoardPress(val x: Int, val y: Int) : Action()
+    object DoCountdown : Action()
     object StartSquareDelay : Action()
     object StartSquareDuration : Action()
+    object Resume : Action()
+    object Pause : Action()
 }
 
 sealed class Effect {
+    object StartCountdown : Effect()
     data class UpdateStartCountdownValue(val countdownValue: Int) : Effect()
     data class DrawSquare(val squareRect: Rect) : Effect()
     object GameStarted : Effect()

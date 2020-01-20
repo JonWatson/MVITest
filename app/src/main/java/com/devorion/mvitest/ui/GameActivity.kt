@@ -11,11 +11,13 @@ import com.jakewharton.rxbinding2.view.touches
 import io.reactivex.ObservableSource
 import io.reactivex.Observer
 import io.reactivex.functions.Consumer
+import io.reactivex.subjects.PublishSubject
 import kotlinx.android.synthetic.main.activity_main.*
 import org.koin.android.ext.android.inject
 
-class GameActivity : AppCompatActivity(), ObservableSource<Wish> {
+class GameActivity : AppCompatActivity(), ObservableSource<Wish>, Consumer<State> {
     private val gameStorage: GameStorage by inject()
+    private val wishPublisher: PublishSubject<Wish> = PublishSubject.create()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -27,22 +29,25 @@ class GameActivity : AppCompatActivity(), ObservableSource<Wish> {
             resources.displayMetrics.widthPixels,
             3
         )
-        binder.bind(feature to Consumer {
-            Log.d("State", it.toString())
-            when (it.gameState) {
-                GameState.ReadyToStart -> showReadyToStart(it)
-                GameState.CountingDown -> updateCountdown(it)
-                GameState.WaitingToShowSquare -> clearAndShowStreak(it)
-                GameState.ShowingSquare -> gameBoard.drawSquare(it.squareRect)
-                GameState.GameOver -> showGameOver(it)
-            }
-        })
 
+        binder.bind(feature to this)
         binder.bind(this to feature)
+        gameBoard.touches().map { Wish.BoardPress(it.x, it.y) }.subscribe(wishPublisher)
     }
 
     override fun subscribe(observer: Observer<in Wish>) {
-        gameBoard.touches().map { Wish.BoardPress(it.x, it.y) }.subscribe(observer)
+        wishPublisher.subscribe(observer)
+    }
+
+    override fun accept(state: State) {
+        Log.d("State", state.toString())
+        when (state.gameState) {
+            GameState.ReadyToStart -> showReadyToStart(state)
+            GameState.CountingDown -> updateCountdown(state)
+            GameState.WaitingToShowSquare -> clearAndShowStreak(state)
+            GameState.ShowingSquare -> gameBoard.drawSquare(state.squareRect)
+            GameState.GameOver -> showGameOver(state)
+        }
     }
 
     private fun showReadyToStart(state: State) {
@@ -73,5 +78,15 @@ class GameActivity : AppCompatActivity(), ObservableSource<Wish> {
         countdown.text = "Press To Try Again"
         status.text = sb.toString()
         gameBoard.clearSquare()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        wishPublisher.onNext(Wish.Pause)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        wishPublisher.onNext(Wish.Resume)
     }
 }
