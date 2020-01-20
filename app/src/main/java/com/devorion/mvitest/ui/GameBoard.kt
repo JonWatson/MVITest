@@ -2,33 +2,39 @@ package com.devorion.mvitest.ui
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Rect
+import android.graphics.*
 import android.util.AttributeSet
 import android.widget.FrameLayout
+import com.jakewharton.rxbinding2.view.touches
+import io.reactivex.Observable
 
 class GameBoard(
     context: Context,
     attributeSet: AttributeSet
 ) : FrameLayout(context, attributeSet) {
 
-    private var squareRect: Rect? = null
+    val touchObservable: Observable<Point>
+    private var relativeSquareRect: Rect? = null
+    private var relativeBoardSize = 1
     private val paint = Paint().apply {
         color = Color.DKGRAY
     }
 
     init {
         setWillNotDraw(false)
+        touchObservable = touches().map {
+            val boardRatio = width / relativeBoardSize
+            Point((it.x / boardRatio).toInt(), (it.y / boardRatio).toInt())
+        }
     }
 
     fun clearSquare() {
-        drawSquare(null)
+        drawSquare(null, 1)
     }
 
-    fun drawSquare(rect: Rect?) {
-        squareRect = rect
+    fun drawSquare(relativeSquareRect: Rect?, relativeBoardSize: Int) {
+        this.relativeSquareRect = relativeSquareRect
+        this.relativeBoardSize = relativeBoardSize
         invalidate()
     }
 
@@ -37,8 +43,16 @@ class GameBoard(
         super.onDraw(canvas)
 
         canvas?.run {
-            squareRect?.let {
-                canvas.drawRect(it, paint)
+            relativeSquareRect?.let { rect ->
+                val boardRatio = width / relativeBoardSize
+                val adjustedRect =
+                    Rect(
+                        rect.left * boardRatio,
+                        rect.top * boardRatio,
+                        rect.right * boardRatio,
+                        rect.bottom * boardRatio
+                    )
+                canvas.drawRect(adjustedRect, paint)
             }
         }
     }

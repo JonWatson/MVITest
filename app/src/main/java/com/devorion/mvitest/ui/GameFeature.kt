@@ -17,7 +17,7 @@ import kotlin.math.max
 
 class GameFeature(
     gameStorage: GameStorage,
-    boardSize: Int,
+    relativeBoardSize: Int,
     countdownLength: Int
 ) : BaseFeature<Wish, Action, Effect, State, Nothing>(
     initialState = State(
@@ -25,14 +25,15 @@ class GameFeature(
         0,
         gameStorage.highestStreak,
         null,
+        relativeBoardSize,
         countdownLength,
         countdownLength
     ),
     wishToAction = { wish ->
         when (wish) {
             is Wish.BoardPress -> Action.BoardPress(
-                wish.x.toInt(),
-                wish.y.toInt()
+                wish.x,
+                wish.y
             )
             Wish.Resume -> Action.Resume
             Wish.Pause -> Action.Pause
@@ -40,7 +41,7 @@ class GameFeature(
     },
     actor = GameActor(
         gameStorage,
-        boardSize
+        relativeBoardSize
     ),
     reducer = GameReducer(),
     postProcessor = GamePostProcessor()
@@ -49,7 +50,7 @@ class GameFeature(
     // Actor
     class GameActor(
         private val gameStorage: GameStorage,
-        private val boardSize: Int
+        private val relativeBoardSize: Int
     ) : Actor<State, Action, Effect> {
         var showSquareDisposable: Disposable? = null
         var delaySquareDisposable: Disposable? = null
@@ -150,8 +151,8 @@ class GameFeature(
             state: State,
             boardPressAction: Action.BoardPress
         ): Observable<out Effect> {
-            return if (state.squareRect != null &&
-                state.squareRect.contains(boardPressAction.x, boardPressAction.y)
+            return if (state.relativeSquareRect != null &&
+                state.relativeSquareRect.contains(boardPressAction.relativeX, boardPressAction.relativeY)
             ) {
                 showSquareDisposable?.dispose()
                 Observable.just(Effect.Success)
@@ -163,7 +164,7 @@ class GameFeature(
         // Determine size of the next square.
         // This can be used to manage game difficulty as a streak grows
         private fun getNewSquareSize(state: State): Int {
-            return max(((boardSize / 8) - state.streak), boardSize / 18)
+            return max(((relativeBoardSize / 8) - state.streak / 10), relativeBoardSize / 18)
         }
 
         // Pick a random point on the board to show the next square
@@ -171,8 +172,8 @@ class GameFeature(
             squareSize: Int
         ): Rect {
             val rand = Random(System.currentTimeMillis())
-            val x = rand.nextInt(boardSize - squareSize)
-            val y = rand.nextInt(boardSize - squareSize)
+            val x = rand.nextInt(relativeBoardSize - squareSize)
+            val y = rand.nextInt(relativeBoardSize - squareSize)
             return Rect(x, y, x + squareSize, y + squareSize)
         }
 
@@ -209,18 +210,18 @@ class GameFeature(
                 is Effect.DrawSquare ->
                     state.copy(
                         gameState = GameState.ShowingSquare,
-                        squareRect = effect.squareRect
+                        relativeSquareRect = effect.squareRect
                     )
                 Effect.Success ->
                     state.copy(
                         gameState = GameState.WaitingToShowSquare,
                         streak = state.streak + 1,
-                        squareRect = null
+                        relativeSquareRect = null
                     )
                 Effect.Fail ->
                     state.copy(
                         gameState = GameState.GameOver,
-                        squareRect = null,
+                        relativeSquareRect = null,
                         highestStreak = max(state.streak, state.highestStreak)
                     )
                 Effect.StartCountdown -> {
@@ -251,7 +252,8 @@ data class State(
     val gameState: GameState,
     val streak: Int,
     val highestStreak: Int,
-    val squareRect: Rect?,
+    val relativeSquareRect: Rect?,
+    val relativeBoardSize: Int,
     val countdownValue: Int,
     val countdownStartValue: Int
 )
@@ -265,13 +267,13 @@ sealed class GameState {
 }
 
 sealed class Wish {
-    data class BoardPress(val x: Float, val y: Float) : Wish()
+    data class BoardPress(val x: Int, val y: Int) : Wish()
     object Resume : Wish()
     object Pause : Wish()
 }
 
 sealed class Action {
-    data class BoardPress(val x: Int, val y: Int) : Action()
+    data class BoardPress(val relativeX: Int, val relativeY: Int) : Action()
     object DoCountdown : Action()
     object StartSquareDelay : Action()
     object StartSquareDuration : Action()
